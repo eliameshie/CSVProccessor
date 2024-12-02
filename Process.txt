@@ -1,0 +1,146 @@
+Option Compare Database
+Option Explicit
+
+Public Sub ImportGroupedCSVFile()
+    On Error GoTo ErrorHandler
+    
+    ' Constants for table names
+    Const TABLE_NAME As String = "VoidedReports"
+    
+    ' Create the table
+    CreateVoidedReportsTable
+    
+    ' Import the file
+    ProcessGroupedCSVFile "", TABLE_NAME
+    
+    MsgBox "Data import completed successfully!", vbInformation
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description, vbCritical
+End Sub
+
+Private Sub CreateVoidedReportsTable()
+    On Error GoTo ErrorHandler
+    
+    Dim db As DAO.Database
+    Set db = CurrentDb
+    
+    ' Drop table if it exists
+    On Error Resume Next
+    db.Execute "DROP TABLE VoidedReports"
+    On Error GoTo ErrorHandler
+    
+    ' Create new table
+    Dim sql As String
+    sql = "CREATE TABLE VoidedReports (" & _
+          "ID AUTOINCREMENT PRIMARY KEY, " & _
+          "AccountNumber TEXT(20), " & _
+          "CheckNumber TEXT(20), " & _
+          "TransactionType TEXT(20), " & _
+          "CheckDate DATE, " & _
+          "Amount CURRENCY, " & _
+          "PayeeName TEXT(255), " & _
+          "Additional TEXT(255), " & _
+          "UserID TEXT(50), " & _
+          "CreateDate DATE, " & _
+          "ApproverID TEXT(50), " & _
+          "ApprovedDateTime DATE, " & _
+          "Status TEXT(50)" & _
+          ")"
+    
+    db.Execute sql
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error creating table: " & Err.Description, vbCritical
+End Sub
+
+Private Sub ProcessGroupedCSVFile(filepath As String, tableName As String)
+    On Error GoTo ErrorHandler
+    
+    Dim fso As Object
+    Dim ts As Object
+    Dim line As String
+    Dim db As DAO.Database
+    Dim currentAccount As String
+    Dim lineCount As Long
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set ts = fso.OpenTextFile(filepath, 1)
+    Set db = CurrentDb
+    
+    lineCount = 0
+    currentAccount = ""
+    
+    ' Skip the first two header rows
+    ts.ReadLine
+    ts.ReadLine
+    
+    ' Read through the file
+    While Not ts.AtEndOfStream
+        line = ts.ReadLine
+        
+        ' Check if line contains account information
+        If InStr(1, line, "Account:") > 0 Then
+            currentAccount = ExtractAccountNumber(line)
+        ElseIf Len(Trim(line)) > 0 And Not IsHeaderRow(line) Then
+            ' Process data row
+            ProcessDataRow line, currentAccount, db, tableName
+        End If
+    Wend
+    
+    ts.Close
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error processing file: " & Err.Description, vbCritical
+End Sub
+
+Private Function ExtractAccountNumber(line As String) As String
+    Dim parts() As String
+    parts = Split(line, " ")
+    ExtractAccountNumber = Replace(parts(1), ":", "")
+End Function
+
+Private Function IsHeaderRow(line As String) As Boolean
+    ' Check if this is a header row by looking for typical header content
+    IsHeaderRow = (InStr(1, line, "Check No.") > 0) Or _
+                 (InStr(1, line, "Type") > 0 And InStr(1, line, "Check Date") > 0)
+End Function
+
+Private Sub ProcessDataRow(line As String, accountNumber As String, db As DAO.Database, tableName As String)
+    On Error GoTo ErrorHandler
+    
+    Dim fields() As String
+    fields = Split(line, ",")
+    
+    If UBound(fields) < 11 Then Exit Sub ' Skip invalid rows
+    
+    Dim sql As String
+    sql = "INSERT INTO " & tableName & " (AccountNumber, CheckNumber, TransactionType, " & _
+          "CheckDate, Amount, PayeeName, Additional, UserID, CreateDate, ApproverID, " & _
+          "ApprovedDateTime, Status) VALUES " & _
+          "(@account, @check, @type, @date, @amount, @payee, " & _
+          "@additional, @user, @create, @approver, @approved, @status)"
+    
+   
+    sql = Replace(sql, "@account", "'" & accountNumber & "'")
+    sql = Replace(sql, "@check", "'" & Trim(fields(1)) & "'")
+    sql = Replace(sql, "@type", "'" & Trim(fields(2)) & "'")
+    sql = Replace(sql, "@date", "#" & Format(CDate(Trim(fields(3))), "mm/dd/yyyy") & "#")
+    sql = Replace(sql, "@amount", Trim(fields(4)))
+    sql = Replace(sql, "@payee", "'" & Trim(fields(5)) & "'")
+    sql = Replace(sql, "@additional", "'" & Trim(fields(6)) & "'")
+    sql = Replace(sql, "@user", "'" & Trim(fields(7)) & "'")
+    sql = Replace(sql, "@create", "#" & Format(CDate(Trim(fields(8))), "mm/dd/yyyy") & "#")
+    sql = Replace(sql, "@approver", "'" & Trim(fields(9)) & "'")
+    sql = Replace(sql, "@approved", "#" & Format(CDate(Trim(fields(10))), "mm/dd/yyyy") & "#")
+    sql = Replace(sql, "@status", "'" & Trim(fields(11)) & "'")
+    
+    db.Execute sql
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error processing row: " & line & vbCrLf & "Error: " & Err.Description, vbCritical
+End Sub
